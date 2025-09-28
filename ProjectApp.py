@@ -10,8 +10,9 @@ import tempfile
 from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
 
 # ReportLab for PDF
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, Table, TableStyle
 from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib import colors
 
 # ---------------------------
 # Import XGBoost explicitly
@@ -132,6 +133,7 @@ elif page == "CAD Prediction Tool":
                         st.write(f"**Accuracy:** {acc:.2f}")
                     else:
                         acc = None
+                        fig2 = None
 
                     # Feature Importance
                     if hasattr(model, "feature_importances_"):
@@ -147,7 +149,7 @@ elif page == "CAD Prediction Tool":
 
                     # Save in session_state
                     st.session_state["fig1"] = fig1
-                    st.session_state["fig2"] = fig2 if y_true is not None else None
+                    st.session_state["fig2"] = fig2
                     st.session_state["fig3"] = fig3
                     st.session_state["acc"] = acc
                     st.session_state["data"] = data.copy()
@@ -167,13 +169,50 @@ elif page == "CAD Prediction Tool":
                         styles = getSampleStyleSheet()
                         story = []
 
+                        # Title
                         story.append(Paragraph("CAD Prediction Report", styles["Title"]))
                         story.append(Spacer(1, 20))
 
+                        # Accuracy
                         if st.session_state["acc"] is not None:
                             story.append(Paragraph(f"Accuracy: {st.session_state['acc']:.2f}", styles["Normal"]))
                             story.append(Spacer(1, 10))
 
+                        # Classification report table
+                        if "data" in st.session_state and st.session_state["data"] is not None:
+                            report = classification_report(
+                                st.session_state["data"]["Actual_Status"],
+                                st.session_state["data"]["Predicted_Status"],
+                                output_dict=True
+                            )
+                            report_df = pd.DataFrame(report).transpose().round(2)
+
+                            table_data = [["Class", "Precision", "Recall", "F1-Score", "Support"]]
+                            for cls in report_df.index:
+                                if cls == "accuracy":
+                                    continue
+                                row = [
+                                    cls,
+                                    report_df.loc[cls, "precision"],
+                                    report_df.loc[cls, "recall"],
+                                    report_df.loc[cls, "f1-score"],
+                                    int(report_df.loc[cls, "support"])
+                                ]
+                                table_data.append(row)
+
+                            tbl = Table(table_data, hAlign='LEFT')
+                            tbl.setStyle(TableStyle([
+                                ('BACKGROUND', (0,0), (-1,0), colors.grey),
+                                ('TEXTCOLOR',(0,0),(-1,0),colors.whitesmoke),
+                                ('ALIGN',(1,1),(-1,-1),'CENTER'),
+                                ('GRID', (0,0), (-1,-1), 1, colors.black),
+                                ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+                            ]))
+                            story.append(Paragraph("Classification Report", styles["Heading2"]))
+                            story.append(tbl)
+                            story.append(Spacer(1, 20))
+
+                        # Add plots
                         for fig, title in zip(
                             [st.session_state["fig1"], st.session_state["fig2"], st.session_state["fig3"]],
                             ["Prediction Ratio", "Confusion Matrix", "Feature Importance"]
@@ -186,8 +225,10 @@ elif page == "CAD Prediction Tool":
                                 story.append(Spacer(1, 20))
                                 tmp_img.close()
 
+                        # Build PDF
                         doc.build(story)
 
+                        # Streamlit download button
                         with open(pdf_file, "rb") as f:
                             st.download_button(
                                 label="📥 Download PDF",
