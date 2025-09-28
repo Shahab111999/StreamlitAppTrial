@@ -70,172 +70,181 @@ elif page == "CAD Prediction Tool":
             st.write("### Dataset Preview")
             st.dataframe(data.head())
 
-            if "Status" not in data.columns:
-                st.error("Dataset must contain a 'Status' column with 'cad' or 'control'")
-            else:
-                # Load model & features
-                model = pickle.load(open("cad_model.pkl", "rb"))
-                with open("cad_features.json", "r") as f:
-                    expected_features = json.load(f)
+            # ---------------------------
+            # Dynamic target column selection
+            # ---------------------------
+            target_col = st.selectbox("Select the target column", options=data.columns)
+            target_values = data[target_col].unique()
+            st.write(f"Detected unique values in `{target_col}`: {target_values}")
 
-                X = data.drop(columns=["Status"], errors="ignore")
-                y_true = data["Status"].str.lower() if "Status" in data.columns else None
+            # Ask user which value is CAD and which is Control
+            cad_value = st.selectbox("Select the value that corresponds to CAD", options=target_values)
+            control_value = st.selectbox(
+                "Select the value that corresponds to Control",
+                options=[v for v in target_values if v != cad_value]
+            )
 
-                # Encode categorical
-                for col in X.select_dtypes(include="object").columns:
-                    X[col] = pd.factorize(X[col])[0]
+            # Map target to standard labels
+            data["Status"] = data[target_col].apply(lambda x: "cad" if x == cad_value else "control")
 
-                # Add missing cols / drop extras
-                for c in expected_features:
-                    if c not in X.columns:
-                        X[c] = 0
-                X = X[expected_features]
+            # Load model & features
+            model = pickle.load(open("cad_model.pkl", "rb"))
+            with open("cad_features.json", "r") as f:
+                expected_features = json.load(f)
 
-                # ---------------------------
-                # Predict CAD
-                # ---------------------------
-                if st.button("Predict CAD"):
-                    preds = model.predict(X)
-                    mapping = {0: "cad", 1: "control"}
-                    data["Predicted_Status"] = [mapping.get(p, p) for p in preds]
-                    if y_true is not None:
-                        data["Actual_Status"] = y_true
+            X = data.drop(columns=[target_col, "Status"], errors="ignore")
 
-                    st.success("✅ Predictions completed!")
-                    st.dataframe(data.head())
+            # Encode categorical
+            for col in X.select_dtypes(include="object").columns:
+                X[col] = pd.factorize(X[col])[0]
 
-                    # Prediction Ratio
-                    pred_counts = data["Predicted_Status"].value_counts()
-                    fig1, ax1 = plt.subplots()
-                    sns.barplot(x=pred_counts.index, y=pred_counts.values, ax=ax1, palette="Set2")
-                    ax1.set_title("CAD vs Control Predictions")
-                    ax1.set_ylabel("Count")
-                    ax1.set_xlabel("Predicted Status")
-                    st.pyplot(fig1)
+            # Add missing cols / drop extras
+            for c in expected_features:
+                if c not in X.columns:
+                    X[c] = 0
+            X = X[expected_features]
 
-                    # Confusion Matrix & Accuracy
-                    if y_true is not None:
-                        cm = confusion_matrix(y_true, data["Predicted_Status"], labels=["cad", "control"])
-                        fig2, ax2 = plt.subplots()
-                        sns.heatmap(cm, annot=True, fmt="d", cmap="Blues",
-                                    xticklabels=["cad", "control"],
-                                    yticklabels=["cad", "control"],
-                                    ax=ax2)
-                        ax2.set_xlabel("Predicted")
-                        ax2.set_ylabel("Actual")
-                        st.pyplot(fig2)
+            y_true = data["Status"]
 
-                        report = classification_report(y_true, data["Predicted_Status"], output_dict=True)
-                        report_df = pd.DataFrame(report).transpose()
-                        st.dataframe(report_df.style.background_gradient(cmap="Blues"))
+            # ---------------------------
+            # Predict CAD
+            # ---------------------------
+            if st.button("Predict CAD"):
+                preds = model.predict(X)
+                mapping = {0: "cad", 1: "control"}
+                data["Predicted_Status"] = [mapping.get(p, p) for p in preds]
 
-                        acc = accuracy_score(y_true, data["Predicted_Status"])
-                        st.write(f"**Accuracy:** {acc:.2f}")
-                    else:
-                        acc = None
-                        fig2 = None
+                st.success("✅ Predictions completed!")
+                st.dataframe(data.head())
 
-                    # Feature Importance
-                    if hasattr(model, "feature_importances_"):
-                        importance = model.feature_importances_
-                        feat_imp = pd.DataFrame({"Feature": X.columns, "Importance": importance})
-                        feat_imp = feat_imp.sort_values(by="Importance", ascending=False)
-                        fig3, ax3 = plt.subplots(figsize=(10, 6))
-                        sns.barplot(x="Importance", y="Feature", data=feat_imp, ax=ax3, palette="viridis")
-                        ax3.set_title("Feature Importance")
-                        st.pyplot(fig3)
-                    else:
-                        fig3 = None
+                # Prediction Ratio
+                pred_counts = data["Predicted_Status"].value_counts()
+                fig1, ax1 = plt.subplots()
+                sns.barplot(x=pred_counts.index, y=pred_counts.values, ax=ax1, palette="Set2")
+                ax1.set_title("CAD vs Control Predictions")
+                ax1.set_ylabel("Count")
+                ax1.set_xlabel("Predicted Status")
+                st.pyplot(fig1)
 
-                    # Save in session_state
-                    st.session_state["fig1"] = fig1
-                    st.session_state["fig2"] = fig2
-                    st.session_state["fig3"] = fig3
-                    st.session_state["acc"] = acc
-                    st.session_state["data"] = data.copy()
+                # Confusion Matrix & Accuracy
+                cm = confusion_matrix(y_true, data["Predicted_Status"], labels=["cad", "control"])
+                fig2, ax2 = plt.subplots()
+                sns.heatmap(cm, annot=True, fmt="d", cmap="Blues",
+                            xticklabels=["cad", "control"],
+                            yticklabels=["cad", "control"],
+                            ax=ax2)
+                ax2.set_xlabel("Predicted")
+                ax2.set_ylabel("Actual")
+                st.pyplot(fig2)
 
-                # ---------------------------
-                # Generate PDF using session_state
-                # ---------------------------
-                if st.button("📄 Generate PDF Report"):
-                    if "fig1" not in st.session_state:
-                        st.error("Please run 'Predict CAD' first!")
-                    else:
-                        tmp_pdf = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
-                        pdf_file = tmp_pdf.name
-                        tmp_pdf.close()
+                report = classification_report(y_true, data["Predicted_Status"], output_dict=True)
+                report_df = pd.DataFrame(report).transpose()
+                st.dataframe(report_df.style.background_gradient(cmap="Blues"))
 
-                        doc = SimpleDocTemplate(pdf_file)
-                        styles = getSampleStyleSheet()
-                        story = []
+                acc = accuracy_score(y_true, data["Predicted_Status"])
+                st.write(f"**Accuracy:** {acc:.2f}")
 
-                        # Title
-                        story.append(Paragraph("CAD Prediction Report", styles["Title"]))
+                # Feature Importance
+                if hasattr(model, "feature_importances_"):
+                    importance = model.feature_importances_
+                    feat_imp = pd.DataFrame({"Feature": X.columns, "Importance": importance})
+                    feat_imp = feat_imp.sort_values(by="Importance", ascending=False)
+                    fig3, ax3 = plt.subplots(figsize=(10, 6))
+                    sns.barplot(x="Importance", y="Feature", data=feat_imp, ax=ax3, palette="viridis")
+                    ax3.set_title("Feature Importance")
+                    st.pyplot(fig3)
+                else:
+                    fig3 = None
+
+                # Save in session_state
+                st.session_state["fig1"] = fig1
+                st.session_state["fig2"] = fig2
+                st.session_state["fig3"] = fig3
+                st.session_state["acc"] = acc
+                st.session_state["data"] = data.copy()
+
+            # ---------------------------
+            # Generate PDF
+            # ---------------------------
+            if st.button("📄 Generate PDF Report"):
+                if "fig1" not in st.session_state:
+                    st.error("Please run 'Predict CAD' first!")
+                else:
+                    tmp_pdf = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+                    pdf_file = tmp_pdf.name
+                    tmp_pdf.close()
+
+                    doc = SimpleDocTemplate(pdf_file)
+                    styles = getSampleStyleSheet()
+                    story = []
+
+                    # Title
+                    story.append(Paragraph("CAD Prediction Report", styles["Title"]))
+                    story.append(Spacer(1, 20))
+
+                    # Accuracy
+                    if st.session_state["acc"] is not None:
+                        story.append(Paragraph(f"Accuracy: {st.session_state['acc']:.2f}", styles["Normal"]))
+                        story.append(Spacer(1, 10))
+
+                    # Classification report table
+                    if "data" in st.session_state and st.session_state["data"] is not None:
+                        report = classification_report(
+                            st.session_state["data"]["Status"],
+                            st.session_state["data"]["Predicted_Status"],
+                            output_dict=True
+                        )
+                        report_df = pd.DataFrame(report).transpose().round(2)
+
+                        table_data = [["Class", "Precision", "Recall", "F1-Score", "Support"]]
+                        for cls in report_df.index:
+                            if cls == "accuracy":
+                                continue
+                            row = [
+                                cls,
+                                report_df.loc[cls, "precision"],
+                                report_df.loc[cls, "recall"],
+                                report_df.loc[cls, "f1-score"],
+                                int(report_df.loc[cls, "support"])
+                            ]
+                            table_data.append(row)
+
+                        tbl = Table(table_data, hAlign='LEFT')
+                        tbl.setStyle(TableStyle([
+                            ('BACKGROUND', (0,0), (-1,0), colors.grey),
+                            ('TEXTCOLOR',(0,0),(-1,0),colors.whitesmoke),
+                            ('ALIGN',(1,1),(-1,-1),'CENTER'),
+                            ('GRID', (0,0), (-1,-1), 1, colors.black),
+                            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+                        ]))
+                        story.append(Paragraph("Classification Report", styles["Heading2"]))
+                        story.append(tbl)
                         story.append(Spacer(1, 20))
 
-                        # Accuracy
-                        if st.session_state["acc"] is not None:
-                            story.append(Paragraph(f"Accuracy: {st.session_state['acc']:.2f}", styles["Normal"]))
-                            story.append(Spacer(1, 10))
-
-                        # Classification report table
-                        if "data" in st.session_state and st.session_state["data"] is not None:
-                            report = classification_report(
-                                st.session_state["data"]["Actual_Status"],
-                                st.session_state["data"]["Predicted_Status"],
-                                output_dict=True
-                            )
-                            report_df = pd.DataFrame(report).transpose().round(2)
-
-                            table_data = [["Class", "Precision", "Recall", "F1-Score", "Support"]]
-                            for cls in report_df.index:
-                                if cls == "accuracy":
-                                    continue
-                                row = [
-                                    cls,
-                                    report_df.loc[cls, "precision"],
-                                    report_df.loc[cls, "recall"],
-                                    report_df.loc[cls, "f1-score"],
-                                    int(report_df.loc[cls, "support"])
-                                ]
-                                table_data.append(row)
-
-                            tbl = Table(table_data, hAlign='LEFT')
-                            tbl.setStyle(TableStyle([
-                                ('BACKGROUND', (0,0), (-1,0), colors.grey),
-                                ('TEXTCOLOR',(0,0),(-1,0),colors.whitesmoke),
-                                ('ALIGN',(1,1),(-1,-1),'CENTER'),
-                                ('GRID', (0,0), (-1,-1), 1, colors.black),
-                                ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-                            ]))
-                            story.append(Paragraph("Classification Report", styles["Heading2"]))
-                            story.append(tbl)
+                    # Add plots
+                    for fig, title in zip(
+                        [st.session_state["fig1"], st.session_state["fig2"], st.session_state["fig3"]],
+                        ["Prediction Ratio", "Confusion Matrix", "Feature Importance"]
+                    ):
+                        if fig is not None:
+                            tmp_img = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+                            fig.savefig(tmp_img.name, bbox_inches="tight", facecolor="white")
+                            story.append(Paragraph(title, styles["Heading2"]))
+                            story.append(Image(tmp_img.name, width=400, height=250))
                             story.append(Spacer(1, 20))
+                            tmp_img.close()
 
-                        # Add plots
-                        for fig, title in zip(
-                            [st.session_state["fig1"], st.session_state["fig2"], st.session_state["fig3"]],
-                            ["Prediction Ratio", "Confusion Matrix", "Feature Importance"]
-                        ):
-                            if fig is not None:
-                                tmp_img = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
-                                fig.savefig(tmp_img.name, bbox_inches="tight", facecolor="white")
-                                story.append(Paragraph(title, styles["Heading2"]))
-                                story.append(Image(tmp_img.name, width=400, height=250))
-                                story.append(Spacer(1, 20))
-                                tmp_img.close()
+                    # Build PDF
+                    doc.build(story)
 
-                        # Build PDF
-                        doc.build(story)
-
-                        # Streamlit download button
-                        with open(pdf_file, "rb") as f:
-                            st.download_button(
-                                label="📥 Download PDF",
-                                data=f,
-                                file_name="CAD_Prediction_Report.pdf",
-                                mime="application/pdf"
-                            )
+                    # Streamlit download button
+                    with open(pdf_file, "rb") as f:
+                        st.download_button(
+                            label="📥 Download PDF",
+                            data=f,
+                            file_name="CAD_Prediction_Report.pdf",
+                            mime="application/pdf"
+                        )
 
         except Exception as e:
             st.error(f"Error processing file: {e}")
