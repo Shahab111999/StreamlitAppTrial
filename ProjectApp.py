@@ -9,12 +9,16 @@ import tempfile
 import joblib
 import sys
 # Top of your script
+
+
 try:
     from sklearn.compose._column_transformer import _RemainderColsList
 except ImportError:
     class _RemainderColsList(list):
         """Dummy class to allow loading old pickled models."""
         pass
+
+from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
 
 # Add it to the module namespace so pickle can find it
 sys.modules['sklearn.compose._column_transformer']._RemainderColsList = _RemainderColsList
